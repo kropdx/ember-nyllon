@@ -1,0 +1,43 @@
+{
+  "name": "ember-nyllon",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.18.3",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @ember/worker --filter @ember/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @ember/e2e test:e2e",
+    "test:features": "pnpm --filter @ember/e2e test:e2e --project features",
+    "test:mobile": "pnpm --filter @ember/e2e test:e2e --project 'mobile *'",
+    "screenshots": "pnpm --filter @ember/e2e test:e2e --project screenshots --update-snapshots",
+    "deploy": "node apps/worker/scripts/deploy.ts",
+    "vapid:keys": "node apps/worker/scripts/vapid-keys.ts",
+    "perf": "pnpm --filter @ember/perf start",
+    "seed": "node apps/worker/scripts/seed.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "wrangler": "^4.149.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "EMBER_SETUP_PASSWORD": {
+        "description": "Make up a setup password of at least 12 characters. Ember's setup page asks for it once, so only you can set Ember up. Forgot it? Change it in the Worker's Settings, under Variables and Secrets."
+      },
+      "EMAIL": {
+        "description": "Cloudflare Email Service, which sends Ember's email once your account is on Workers Paid and has a domain onboarded to Email Sending."
+      },
+      "FILES": {
+        "description": "The R2 bucket for the files people upload to rooms. Any name works; the deploy creates it if your account has none by that name."
+      },
+      "STORAGE_BACKEND": {
+        "description": "Where messages live. Keep `do-sqlite`, which needs nothing more; `d1` also needs a D1 database bound as `DB` (see docs/self-hosting.md)."
+      }
+    }
+  }
+}

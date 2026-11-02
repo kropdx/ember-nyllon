@@ -1,0 +1,669 @@
+# Self-hosting Ember
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/NYLLON-SOFTWARE/ember-cloudflare)
+
+Everything about running your own Ember: deploying it, the settings an administrator turns on, what it
+costs, and where it keeps messages. The [README](../README.md) has the short version, and
+[Development](development.md) covers working on the code.
+
+The button copies this repository to your GitHub or GitLab account and deploys it to your Cloudflare
+account, as [Deploying](#deploying) describes.
+
+- [Deploying](#deploying)
+  - [Updating](#updating)
+  - [A custom domain](#a-custom-domain)
+  - [Who can join](#who-can-join)
+  - [Memberful sign-in](#memberful-sign-in)
+  - [Sending email](#sending-email)
+  - [Inviting people by email](#inviting-people-by-email)
+  - [Push notifications](#push-notifications)
+  - [Files](#files)
+  - [Ember AI](#ember-ai)
+  - [A preview from GitHub Actions](#a-preview-from-github-actions)
+  - [A demo from GitHub Actions](#a-demo-from-github-actions)
+  - [Resetting a password](#resetting-a-password)
+  - [Security notes](#security-notes)
+- [What it costs](#what-it-costs)
+- [Storage: Durable Object SQLite or D1](#storage-durable-object-sqlite-or-d1)
+
+## Deploying
+
+The Deploy to Cloudflare button at the top asks you to name the repository, the Worker and the R2
+bucket for files (turn R2 on for your account first), and to make up a setup password,
+`EMBER_SETUP_PASSWORD`, of at least 12 characters, then Cloudflare's Workers Builds builds and
+deploys it, and again after every push to the copy. Connecting GitHub or GitLab to Cloudflare the
+first time leaves you on Cloudflare's page for deploying one of your own repositories, so click the
+button again afterwards. If your account already has a bucket named `ember`, the form picks it, so
+pick a new one there for this Ember's files. The copy has all of Ember but its `.github` folder, so
+add the Update Ember workflow to it, as [Updating](#updating) says, for it to be offered Ember's
+releases. To deploy from your machine instead, after `pnpm exec wrangler login`:
+
+```sh
+pnpm build
+pnpm run deploy        # not `pnpm deploy`, which is pnpm's own command
+```
+
+Either way, `pnpm run deploy` (`apps/worker/scripts/deploy.ts`) makes the Worker's `SESSION_SECRET`
+and a VAPID key pair for push notifications on its first deploy, and later deploys keep them, since
+a new secret would sign everyone out and a new pair would end every push subscription. They go up
+with the code and never appear in the deploy's output.
+
+Whoever deployed Ember sets it up, and nobody else. After Deploy to Cloudflare, open the Worker's
+address and type the setup password you gave the form: `/first_run` asks for it before the
+administrator's account, so nobody who merely finds the address can make themselves the
+administrator, and it allows 10 tries at the password every 10 minutes, from anywhere, so nobody can
+guess it either. Once Ember is set up, setup closes for good, as in Campfire. If the password is
+forgotten, give `EMBER_SETUP_PASSWORD` a new value in the Worker's **Settings**, under **Variables and
+Secrets**, or from a terminal, and type that one:
+
+```sh
+pnpm exec wrangler secret put EMBER_SETUP_PASSWORD   # asks for it; add --name <worker> for a Worker not named in wrangler.jsonc
+```
+
+A first deploy from a terminal, for a Worker with no setup password, makes the Worker a setup token,
+`EMBER_SETUP_TOKEN`, instead, and once it has deployed, prints the setup link that carries it,
+`https://<your Worker>/first_run#token=<the token>`, which opens the form without asking for a
+password. The token rides in the link's fragment, which no request or log sees, and the link is
+spent once Ember is set up. If it's lost, give the Worker a setup password as above, or make a new
+token, give it to the Worker, and open the link with that one:
+
+```sh
+openssl rand -hex 32                              # the new token: keep it
+pnpm exec wrangler secret put EMBER_SETUP_TOKEN   # asks for it; add --name <worker> for a Worker not named in wrangler.jsonc
+```
+
+A deploy whose environment sets `EMBER_SETUP_PASSWORD` gives a Worker without one that password, and
+makes it no token. A setup password shorter than 12 characters opens nothing, and `/first_run` says
+so; a setup token set to anything but 64 lowercase hex characters counts as a setup password. Spaces
+and line breaks around either, which pasting can bring along, don't count. On localhost, where
+`wrangler dev` serves, setup is open to whoever's there unless `.dev.vars` sets a setup password or
+token.
+
+The setup form suggests Kevin Rose and kevin@kevinrose.com for the administrator. To suggest your
+own, set the Worker's `EMBER_SETUP_NAME_PLACEHOLDER` and `EMBER_SETUP_EMAIL_PLACEHOLDER` variables,
+in `vars` in `wrangler.jsonc` for instance.
+
+The administrator then signs in at `/session/new` with the email address and password they set up
+with, and invites people with the join link on general's welcome card.
+
+Ember insists on HTTPS, as Campfire does: plain HTTP is redirected to the same address over HTTPS,
+and every answer from the Worker carries HSTS, except on `localhost` and loopback addresses, where
+`wrangler dev` serves. Unlike Campfire's, it holds only the address it's given at to HTTPS, not the
+names under it, which would be every name on a domain whose apex is Ember's custom domain. To serve
+plain HTTP anywhere else, such as `wrangler dev --ip 0.0.0.0` for a phone on your network, set the
+`DISABLE_SSL` variable to any value. `/up` answers 200 for uptime checks, as Rails' does, without
+touching storage.
+
+### Updating
+
+Ember publishes [releases](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/releases), and a copy
+made with Deploy to Cloudflare comes up to each with a pull request from its Update Ember workflow,
+`.github/workflows/update-ember.yml`, once you add it. Cloudflare's copy leaves out Ember's `.github`
+folder, so every deploy without the workflow ends its build log by saying so, and where git tells the
+build which GitHub repository it's from, with a link that opens GitHub's editor on your copy with
+Ember's workflow filled in: commit it there. Or create the file in your copy, on GitHub with **Add
+file**, then **Create new file**, with what
+[Ember's](https://github.com/NYLLON-SOFTWARE/ember-cloudflare/blob/main/.github/workflows/update-ember.yml)
+has.
+
+The workflow looks for a newer release every Monday, or when you run it from the Actions tab (Update
+Ember, then Run workflow), and opens a pull request, "Update Ember to v1.2.3", that links to what's
+new. Merging it deploys the update, as every push to `main` does, and that's all: each room's and the
+workspace's tables bring themselves up to date the first time they open. Closing it instead turns that
+release down until the next, whose pull request brings its changes too.
+
+Ember tells its administrators too: while a newer release is out, Admin on the rail has a dot, and
+General, in Community settings, names the release, with its notes and how to update. To know, the
+Worker asks GitHub for the page of Ember's latest release once an administrator has Ember open, telling
+it nothing but the version it is, and keeps the answer for six hours.
+
+A new GitHub repository doesn't let workflows open pull requests, so until yours does, the workflow
+opens an issue instead, with a link that opens the pull request for you to merge. To have it open them
+itself, tick **Allow GitHub Actions to create and approve pull requests** in your repository's
+**Settings**, under **Actions**, **General**, **Workflow permissions**, and save.
+
+Your copy shares no history with Ember's repository, so an update brings only what Ember changed
+since the commit your copy was made from, or the release its last update brought, and keeps whatever
+you changed, such as the names Deploy to Cloudflare gave your Worker and bucket in `wrangler.jsonc`.
+Where one of Ember's changes meets one of yours, the pull request is a draft that names the files: edit
+them on its branch to keep what both need, then merge it. Most have conflict markers around both
+versions, yours after `<<<<<<< HEAD` and Ember's after `=======` up to `>>>>>>> ember/v1.2.3`; for a
+file one side deleted, one that isn't text, or one in a folder Ember moved, it gives git's note on
+what it did. GitHub doesn't let a workflow change workflows either, so an update leaves your copy's as
+they are. Ember's others run only in its own repository, and when Update Ember's has a new version,
+the pull request says so, for you to copy it over yours.
+
+A release's migrations add to Ember's tables rather than take anything away, so reverting an update's
+merge, which deploys the release before it, leaves tables that release still works with. The next
+release's pull request brings the reverted one's changes again, with its own. To stop updates, disable
+the workflow in the Actions tab.
+
+`apps/worker/scripts/update-ember.ts` makes the update, wherever git 2.40 or newer runs. For a copy on
+GitLab, which doesn't run GitHub's workflows, or to update by hand, run it in a clone of your copy, and
+it leaves the update on a branch for you to push and merge:
+
+```sh
+node apps/worker/scripts/update-ember.ts    # makes update-ember/<the release>
+git push -u origin update-ember/v1.2.3      # then merge it into main
+```
+
+A clone of Ember's own repository shares its history, so `git pull` brings it up to date too, or the
+script, which merges from where yours and Ember's part.
+
+### A custom domain
+
+Ember answers at its workers.dev address until an administrator gives it one of your own, under
+Domain settings in Workspace settings, at the workers.dev address, and at any other with Move to another
+domain. They type the address, `chat.example.com` say, and choose Set up, which first checks whether
+the address already reaches Ember, as one added to the Worker before does, and then offers just Save.
+Otherwise it asks Cloudflare's resolver for the zone the address is in, `example.com`, and whose
+nameservers serve it, and picks that provider in the DNS provider menu, or Cloudflare when it can't
+tell. Ember holds no Cloudflare token to
+add the address itself, since a token that can add a domain to the Worker can also deploy new code to
+it, so the steps open the dashboard, copying what to paste there. With Cloudflare chosen:
+
+1. If DNS found the domain at another provider, move its DNS to Cloudflare, which is free and copies
+   its records, since a Worker's Custom Domain must be on a domain whose DNS Cloudflare runs, in the
+   account that runs the Worker. Open Cloudflare copies `example.com` and opens the dashboard's
+   Domains, where Onboard a domain takes it and names two nameservers, and the next step says where
+   that provider takes them.
+2. Once the domain is active on Cloudflare, add the address as a Custom Domain of Ember's Worker: Open
+   Cloudflare copies `chat.example.com` and opens the Worker's Domains tab, from the workers.dev address
+   Ember remembers being opened at, where Add Domain takes it. Cloudflare makes the DNS record and the
+   certificate.
+3. Use chat.example.com, which asks the address from the Worker for a one-time probe only this Ember
+   answers, makes it Ember's address once it does, and opens Workspace settings there. Until then it
+   says nothing answers there yet, or that something else does, so Ember is never sent to an address
+   that doesn't reach it.
+
+With any other provider chosen, the domain's DNS stays there, and the steps are those of
+[When the domain's DNS is elsewhere](#when-the-domains-dns-is-elsewhere), ending with the same Use.
+
+From then on, a page opened at any other address moves to the same page at the new one, and the bot
+API's links name it. Everyone signs in once more there, since a session belongs to its address, and
+turns notifications on again, which replaces their browser's subscription at the old address. Bots
+and webhooks go on posting to the addresses they were given.
+
+Moving to another domain takes the same steps, and Go back to the workers.dev address makes it
+Ember's address once more, once the Worker finds Ember still answers there. Either way, every other
+address sends people to Ember's, the domain it left included: that domain reaches Ember until it's
+removed on the Worker's Domains tab, which only the dashboard does. So Custom domain names the domains
+Ember moved away from, links to that tab, and checks each until it's gone. Workspace settings stay
+wherever they're opened, so if Ember's domain ever stops reaching it, open Domain settings at the
+workers.dev address and go back there. Deploys leave the domain alone as long as `wrangler.jsonc` lists no
+`routes`.
+
+#### When the domain's DNS is elsewhere
+
+Cloudflare gives a Worker a Custom Domain only on a domain whose DNS it runs. To leave the DNS where
+it is, Ember takes the address through Cloudflare for SaaS instead, as Set up's steps say once
+another provider is chosen in the DNS provider menu. That takes another domain already on Cloudflare
+in the account that runs Ember, `example.net` say, which the steps ask for, and a payment method,
+though the first 100 addresses are free. In the Cloudflare dashboard, on example.net:
+
+1. Under DNS, Records, add a proxied `AAAA` record, `ember-saas`, for `100::`, an address that goes
+   nowhere.
+2. Under SSL/TLS, Custom Hostnames, enable Cloudflare for SaaS, make `ember-saas.example.net` the
+   Fallback Origin unless example.net has one already, and add `chat.example.com` with HTTP
+   validation. Keep a Fallback Origin that's there: replacing it would send example.net's other custom
+   hostnames to `100::`, and the route below takes chat.example.com to Ember whatever it is.
+3. Under Workers Routes, route `chat.example.com/*` to Ember's Worker, and
+   `chat.example.com/.well-known/*` to no Worker, so that Cloudflare itself answers the certificate
+   authority when it issues and renews the address's certificate. A route for `*/*`, as Cloudflare's
+   guide suggests, would send all of example.net to Ember.
+
+Then, at example.com's DNS provider, add a `CNAME` record named `chat` for `ember-saas.example.net`,
+which the steps say where each provider adds. That record is why the address must be a name under
+the domain, such as chat.example.com: example.com itself can't be a CNAME. Once Custom Hostnames shows
+the address and its certificate active, Use chat.example.com makes it Ember's address.
+
+### Who can join
+
+New people join with the join link until an administrator changes how under Who can join, in
+Workspace settings' Membership, where each way has a switch:
+
+- Open, off until it's turned on, lets anyone create an account at `https://<Ember's address>/join`,
+  which the sign-in page links to as Create an account. Nobody checks that an email address is the
+  owner's. Until Ember has Turnstile's keys, below, each network can sign up 5 people an hour, and
+  once 50 people have joined in an hour, however they joined, signing up waits, so a flood can't use
+  up the rows Workers Free writes in a day.
+- Join link, on until it's turned off, lets in anyone with the link. Off, the link sends people to
+  sign in, and on again, it's the same link.
+- Email domain, off until it's turned on, lets in people with an email address at the domains an
+  administrator lists, such as their company's. They ask for a link at
+  `https://<Ember's address>/join/email`, which the sign-in page offers as "Have an address at
+  example.com? Join with it", and Ember emails them one that joins with that address, once, within
+  an hour, so turning it on before Ember can send email sets that up first, below. Ember emails an
+  address at most 3 times an hour, whoever asks, links and the codes that [reset a forgotten
+  password](#resetting-a-password) together, so nobody can fill someone's inbox with them, counting
+  only the emails the provider takes, and until Ember has Turnstile's keys, each network can ask for
+  10 links an hour. Each link is an email, so the provider's limits apply.
+- Memberful, below, lets in the members of a Memberful site, who sign in with their Memberful
+  accounts while everyone else keeps a password. Its Members only switch keeps signing in to them
+  and administrators.
+
+While Open is on, Join link, Email domain and Memberful are set aside, keeping their settings, and
+while Memberful is members only, Open, Join link and Email domain are, so Open and Members only can't
+both be on. With all four off, only the people administrators invite by email, below, can join.
+
+To have open sign-up, Email domain's page and the page for a forgotten password check that whoever
+uses them is a person, an administrator sets up [Turnstile](https://developers.cloudflare.com/turnstile/),
+which is free, by turning on the switch on Membership's Turnstile card, or with Set up Turnstile, under
+the limits Open and Email domain say. It links to Turnstile in the Cloudflare dashboard, where they add a widget for
+Ember's hostname in Managed mode, then takes the widget's site key and secret key and draws its check.
+Once the check passes, Ember asks Cloudflare whether the secret key is the same widget's, and keeps
+both, the secret key encrypted. Turning the card's switch off takes them away.
+
+The sign-up page, Email domain's and the forgotten password page then show Turnstile's check, and the
+Worker asks Turnstile about each form before it makes the account or emails the link or code, in place
+of the limits on a network, which a room full of people on one network, or a launch, would soon reach.
+Signing in has no check, so that one that doesn't load never locks anyone out; it has its own limit.
+
+A deployment can give the Worker a widget's keys as secrets instead, which take the place of any given
+in Membership, whose card then names them:
+
+```sh
+pnpm exec wrangler turnstile widget create Ember --domain chat.example.com --mode managed
+pnpm exec wrangler secret put TURNSTILE_SITE_KEY     # add --name <worker> for a Worker not named in wrangler.jsonc
+pnpm exec wrangler secret put TURNSTILE_SECRET_KEY
+```
+
+`pnpm run deploy` uploads the two when its environment has them, as it does Memberful's keys, so the
+Preview workflow passes repository secrets of the same names through.
+
+### Memberful sign-in
+
+The members of a [Memberful](https://memberful.com) site can join and sign in with their Memberful
+accounts instead of passwords. It's off until an administrator turns it on under Memberful in
+Workspace settings, which walks them through it:
+
+1. In Memberful, under Settings, Custom applications, add an app with Include OAuth tokens with
+   this application checked, choose Server-side, and give it the OAuth redirect URL
+   `https://<Ember's address>/auth/memberful/callback`. Leave Memberful's automatic sign-in off,
+   since it skips the check that ties a sign-in to the browser that started it.
+2. Give the Worker the app's keys as secrets: `MEMBERFUL_URL`, the site's address, such as
+   `https://example.memberful.com`, and the app's OAuth identifier and client secret as
+   `MEMBERFUL_CLIENT_ID` and `MEMBERFUL_CLIENT_SECRET`. Each command asks for its value:
+
+   ```sh
+   pnpm exec wrangler secret put MEMBERFUL_URL      # add --name <worker> for a Worker not named in wrangler.jsonc
+   pnpm exec wrangler secret put MEMBERFUL_CLIENT_ID
+   pnpm exec wrangler secret put MEMBERFUL_CLIENT_SECRET
+   ```
+
+   Or add them under the Worker's Settings, Variables and Secrets in the Cloudflare dashboard, as the
+   type Secret, since a deploy takes away plain text ones. `pnpm run deploy` uploads them too when its
+   environment has them, so the Preview workflow passes repository secrets of the same names through.
+3. So that a member whose membership lapses is signed out, not only kept from signing in again, add
+   a webhook in Memberful under Settings, Webhooks that sends the member, subscription and order
+   events to `https://<Ember's address>/webhooks/memberful`, and give the Worker the webhook's secret
+   key and the app's API key, as the step above does the others:
+
+   ```sh
+   pnpm exec wrangler secret put MEMBERFUL_WEBHOOK_SECRET
+   pnpm exec wrangler secret put MEMBERFUL_API_KEY
+   ```
+4. Turn on Memberful in Workspace settings.
+
+While it's on, the sign-in page offers Member? Sign in with Memberful under its form. Someone with an
+active subscription, or the all access pass, signs in as the person their Memberful account is
+linked to, or else joins as a new member, in every open room, and everyone else joins and signs in
+as before. Accounts are linked by the Memberful site and the member's id there, never by email
+address, since Memberful lets anyone register an address without proving it's theirs: someone new
+whose Memberful email address someone here has already is turned away, and asked to sign in with
+their password. The site is `MEMBERFUL_URL`'s address, so keep it once people have signed in: at
+another address, even the same site's, every member would be someone new. Turning Memberful off
+stops anyone new joining with it, but whoever signed in with it has no password, so they keep
+signing in with it, and the sign-in page keeps offering it, while the Worker has the keys.
+
+Members only, under Memberful, keeps Ember to the site's members: the sign-in page offers Sign in
+with Memberful in place of its form, Open, the join link and signing in with just a name are off,
+and only administrators and the people they invite sign in with a password, who need no membership.
+Sessions people have go on, and turning it off brings the other ways and passwords back.
+
+While Memberful is members only, someone with an account from before connects their Memberful
+account to it with their password: from the Memberful section of their profile, or as they sign in
+with their password, which asks them to connect one until they have. Memberful sends them back
+signed in as themselves, and from then on they sign in with Memberful, and their membership counts
+as anyone's. A connection is good for one try within ten minutes, and a new password, theirs or a
+reset, forgets the ones the old one started. Administrators, and the people they invite, can connect
+one too, and sign in either way.
+
+A member whose membership lapses can't sign in with Memberful again. With the webhook, they're suspended too: their
+sessions end, their sockets close and their browsers' push subscriptions are forgotten, but their
+rooms, private ones too, messages and role stay, and they're back as they were once it's renewed and
+they sign in. Making an open room private leaves them out of it, as it does anyone not chosen. A
+webhook only tells Ember whom to ask about: Memberful sends them in no particular order, so the
+Workspace asks Memberful's API what that member's membership is now, and asks about everyone linked
+once a day too, in case one never came. Administrators, and the people they invite, who need no
+membership, are never suspended. Administrators see suspended members dimmed in Workspace settings,
+where they can remove them, and everyone else sees them as removed. All of this goes on whether
+Memberful is on or not, since its members keep signing in with it once it's off.
+
+### Sending email
+
+Ember sends email with [Resend](https://resend.com), with an API key an administrator gives it, or
+with [Cloudflare Email Service](https://developers.cloudflare.com/email-service/), which wrangler.jsonc
+binds as `EMAIL`. Under Email, in Workspace settings' Membership, Set up email walks an administrator
+through either, then the From address Ember's email comes from, under the community's name unless it
+names another, and sends them a test email as it finishes, so that it checks itself. Turning
+on Email domain, or Invite by email's Set up email, opens it too while Ember can't send email. Stop
+sending email, beside it, takes the From address away, after which Ember emails nothing until email is
+set up again.
+
+With Resend, which sends 3,000 emails a month, at most 100 a day, for free, on Workers Free too:
+
+1. Under Domains in Resend, add the domain to send from, and the DNS records it gives, until Resend
+   says it's verified.
+2. Under API Keys, create a key with Sending access, and paste it into Set up email. Ember asks Resend
+   whether it takes the key, then keeps it in the workspace's settings encrypted with AES-GCM under a
+   key derived from `SESSION_SECRET`, so a copy of the database alone doesn't give it away. A new
+   `SESSION_SECRET` leaves it unreadable until an administrator pastes it again.
+
+A Worker can have the key as a secret instead, which takes the place of one pasted in, leaving Set up
+email only the From address to ask for:
+
+```sh
+pnpm exec wrangler secret put RESEND_API_KEY     # add --name <worker> for a Worker not named in wrangler.jsonc
+```
+
+`pnpm run deploy` uploads it when its environment has it, so the Preview workflow passes a
+repository secret of the same name through.
+
+With Cloudflare Email Service, in beta since April 2026:
+
+1. Put the Cloudflare account that runs Ember on the Workers Paid plan, which includes 3,000 emails a
+   month. On Workers Free it sends only to the account's own verified addresses.
+2. In the Cloudflare dashboard, under Email Service, Email Sending, choose Onboard Domain and pick a
+   domain on Cloudflare DNS, such as the one Ember's custom domain is on. Cloudflare adds the records
+   sending takes.
+
+Choosing Cloudflare Email Service in Set up email forgets a pasted Resend key. Once the From address
+is typed, Set up email looks its domain up for the records Onboard Domain adds, the MX records on
+`cf-bounce.<domain>` and the DKIM key at `cf-bounce._domainkey.<domain>`, and says whether it's
+onboarded, with no Cloudflare API token, which Ember never holds. The records can't say whether the
+account is on Workers Paid; the test email does. When the provider refuses it, Membership says why,
+such as a domain that isn't onboarded or a day's quota used up. `wrangler dev` sends nothing with Cloudflare's binding: it logs each email and saves it to a
+file.
+
+### Inviting people by email
+
+Under Invite by email, in Workspace settings' Membership, an administrator gives the email addresses
+of the people to invite, and Ember emails each a link that joins with that address, once, within 7
+days, whichever ways to join are on, Members only included. Until Ember can send email, the card
+makes the links for the administrator to copy and send. The invitations nobody has accepted are
+listed there, each to send again, which replaces its link, or revoke, and joining with an invited
+address, however someone joins, spends its invitation. A link keeps its secret in the address's
+fragment, which never reaches a server, and Ember keeps only its digest. Each invitation is an email,
+so the provider's limits apply, such as Resend's 100 a day for free.
+
+### Push notifications
+
+Push notifications need a VAPID key pair, which the first deploy makes. `pnpm vapid:keys` prints a
+new one as the Worker's two settings, for `.dev.vars` or to replace a deployment's:
+
+```sh
+pnpm vapid:keys
+pnpm exec wrangler secret put VAPID_PUBLIC_KEY
+pnpm exec wrangler secret put VAPID_PRIVATE_KEY
+```
+
+Without them push is off, and `/api/health` tells an administrator why. Keep the pair once people
+use it: browsers subscribe with its public key, so a new pair leaves everyone to turn notifications
+on again. A pair from Campfire's `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` works as it is.
+
+A new message is pushed from its room's Durable Object as the room tells the Workspace of it, to the
+subscriptions of the members who aren't viewing the room and want to hear of it: each person keeps
+one for each browser they turned notifications on in, which saves it again each time Ember opens
+there, and only the 10 saved most recently. Push services may contact whoever `VAPID_SUBJECT` names,
+a `mailto:` or `https:` address, about your pushes; without it they see this project's address. Each
+push is an outgoing request, of which the Workers Free plan allows 50 per invocation, so there the
+pushes past that, for a message with more subscribers or a run of messages sent together, fail and
+are logged; the Paid plan allows 10,000.
+
+### Files
+
+The files people upload go to an R2 bucket, bound as `FILES` in `wrangler.jsonc` and
+named `ember`. Turn R2 on for your Cloudflare account, then deploy: Wrangler binds the account's
+bucket of that name, and creates it if there's none and its token may, or make it yourself first
+with `pnpm exec wrangler r2 bucket create ember`. Change `bucket_name` to use
+another. `wrangler dev` keeps files on your machine. Without the binding Ember keeps no files, and
+`/api/health` tells an administrator so.
+
+A file goes up in parts of 10 MiB, since a Worker takes at most 100 MB a request, and R2 puts them
+back together. R2 deletes the parts of an upload nobody finishes after a week.
+
+### Ember AI
+
+An administrator adds @ember, an AI assistant, on the AI assistant tab of community settings. Turning
+on its Ember AI card opens Set up Ember AI, which takes a Cloudflare account's ID and an API token,
+both from Workers AI's Use REST API in the Cloudflare dashboard, then a model. Ember asks models
+through the account's default [AI Gateway](https://developers.cloudflare.com/ai-gateway/), whose
+logs, caching and spend limits apply. Workers AI's models come with Cloudflare's free daily
+allowance, and other companies', such as Anthropic's, OpenAI's and Google's, are paid for with AI
+Gateway's credits, as [What it costs](#what-it-costs) says. The Worker asks the model a test question
+before keeping the setup. @ember then joins every room open to everyone, and turning the card off
+takes it out again and forgets the token. Nobody else can take the name Ember, though anyone who had
+it keeps it.
+
+Mention @ember in a room or a thread, or write to it in a DM, and it answers there: in the thread when
+it's asked in one, typing while its model answers. It reads the thread, its first message and latest
+50 replies, or else the room's latest 20 messages, each after its writer's name, at most about 40,000
+characters of them, and sends them through AI Gateway to the model, whose provider reads them. Its
+answer is a message of its own, in Markdown: links, bold, lists, quotes, code blocks and tables show as
+they do in people's messages, the pictures it links to show in a card under it, and its first web link
+gets a preview, as a pasted link does. An answer longer than a message holds is cut to as much as
+fits, ending with an ellipsis. It reads bots' messages but never answers one, so that bots
+can't keep each other talking. When the model can't answer, as when the token is refused or the
+credits run out, @ember says why in a short note, and the Worker's log has Cloudflare's own words.
+AI Gateway's logs keep each request with the id of whoever asked, as custom metadata's `user_id`,
+which a spend limit can be split by.
+
+Two dials say how much @ember does for each question. Thinking, Off, Low, Medium or High, is how much
+its model thinks before it answers, up to about 4,000, 16,000 or 32,000 tokens, asked for as each API
+takes it: a Workers AI or OpenAI model's reasoning effort, or Anthropic's adaptive thinking, at its
+lowest effort for Off, since Anthropic's newest models don't turn thinking off. Answer length, Short,
+Medium or Long, is about 150, 400 or 1,500 words, which @ember's instructions ask for and its token
+limit allows, with room for code and tables. The Limits on the Ember AI card set the most of each for
+anyone's questions, the top of each until an administrator lowers them, and each person picks their
+own levels under Ember AI on their profile, up to those, starting at Low thinking and a Medium answer.
+A model that refuses a thinking level is asked again without one. @ember waits for its model as long
+as the levels may take, 2 minutes at the least and about 13 at High and Long. An answer its token limit
+cuts short ends with an ellipsis, and when the model thinks for all it may before writing anything,
+@ember says so and suggests less thinking.
+
+### A preview from GitHub Actions
+
+The Preview workflow (`.github/workflows/preview.yml`) deploys `main` to a Worker named
+`ember-production` on your workers.dev subdomain after every push, or when run by hand from the
+Actions tab. It needs two repository secrets, and skips without them:
+
+- `CLOUDFLARE_API_TOKEN`: a token made from the "Edit Cloudflare Workers" template.
+- `CLOUDFLARE_ACCOUNT_ID`: under Account details on the Workers & Pages overview.
+
+The first deploy makes the Worker's `SESSION_SECRET` and VAPID key pair, and later ones keep them;
+they go up with the deploy, never in its logs. A public repository's Actions logs are public too, so
+the workflow prints no setup link and makes no setup token: the Worker takes its token from an
+`EMBER_SETUP_TOKEN` repository secret, if you add one (`openssl rand -hex 32`) before the first
+deploy, and the run's log then says to open `<the preview>/first_run#token=<your token>` to set
+Ember up. Without the secret, the deploy check says nobody can set the preview up until you give it
+a setup password with `wrangler secret put EMBER_SETUP_PASSWORD --name ember-production`, which asks
+for it, or deploy it from a terminal with `pnpm run deploy --name ember-production`, which makes a
+token and prints the link.
+
+Repository variables named `EMBER_SETUP_NAME_PLACEHOLDER` and `EMBER_SETUP_EMAIL_PLACEHOLDER`, if
+you add them, become the preview's setup form placeholders.
+
+The preview is a private workspace, which its administrator invites people to with the join link.
+Its version, under the sign-in page's card, is the commit it deployed. After each deploy,
+`node apps/worker/scripts/check-deploy.ts <url>` checks, without signing in, that `/api/health`
+answers (which needs `SESSION_SECRET`, and the Workspace and a room's Durable Object reading their
+storage), that the page loads through the Worker with its headers, that the API asks for sign-in,
+and whether Ember is set up yet, or waits for its setup password or link. `/api/health` tells
+strangers only whether Ember is up; with the Worker's `EMBER_RECOVERY_TOKEN` in its environment, the
+check hears which storage it uses too, and why when it's down. It sends the token only to an `https://` address,
+or an `http://` one on this machine, and follows no redirect with it. The preview's link is on the
+run's summary and under the repository's Deployments.
+
+### A demo from GitHub Actions
+
+The Demo workflow (`.github/workflows/demo.yml`), run by hand from the Actions tab, deploys `main` to
+a Worker of its own, `ember-demo`, with its own R2 bucket, and has `pnpm seed`'s made-up team set it
+up and talk, for people to try Ember without touching the preview. It takes the same two repository
+secrets, and the bucket has to exist first: `pnpm exec wrangler r2 bucket create ember-demo`. Its
+first run takes a setup token (`openssl rand -hex 32`) and everyone's password, which the run masks
+in its log. Sign in as Maya Chen, its administrator, to find its join link in Membership, and pass that
+on to whoever's trying it. A run without them brings the demo up to `main`'s code.
+
+### Resetting a password
+
+While Ember can send email, above, someone who forgot their password resets it themselves: the
+sign-in page's "Forgot your password? Reset it" opens `https://<Ember's address>/passwords/new`,
+where they give their email address, and Ember emails them an 8-digit code. The code works for 15
+minutes, 5 tries and only until a newer one is sent, and with it they choose a new password, which
+signs them in and ends their other sessions. The page says the same whether or not the address has an
+account. Ember emails an address at most 3 times an hour, counting Email domain's links, and until
+Ember has Turnstile's keys, each network can ask for 10 codes an hour. Each try of a code counts
+against sign-in's limit, 10 tries from a network in 3 minutes.
+
+Otherwise, someone who can't sign in gets a new password from `apps/worker/scripts/reset-password.ts`.
+The Worker takes recovery requests only while its `EMBER_RECOVERY_TOKEN` secret is set, and the
+script sends the same token from your shell's environment, so set one up just for the reset (add
+`--name ember-production` to each `wrangler` command for the preview):
+
+```sh
+export EMBER_RECOVERY_TOKEN=$(openssl rand -hex 32)
+printf %s "$EMBER_RECOVERY_TOKEN" | pnpm exec wrangler secret put EMBER_RECOVERY_TOKEN
+node apps/worker/scripts/reset-password.ts https://<your Worker> ada@example.com
+pnpm exec wrangler secret delete EMBER_RECOVERY_TOKEN
+```
+
+The script asks for the new password twice without showing it, or reads one line from stdin. All
+the person's sessions end, with the sign-in links they showed, and their open tabs go to sign in.
+Their browsers get no pushes until they sign in again. Their role and status stay as they
+were, so someone deactivated or banned still can't sign in. Whoever has the token can take over any
+account, so delete the secret once you're done; without it, the endpoint answers 404, as any
+address the API doesn't have does.
+
+### Security notes
+
+What a self-hoster should know, beyond keeping the setup password and link to themselves:
+
+- Every answer carries a `Content-Security-Policy` beside Rails' headers: scripts only from your
+  Worker, images from any HTTPS site, since link previews show their page's image, and no page of
+  Ember's in a frame elsewhere. When the policy gets in the way of something in a browser, the
+  browser reports it to `/csp-report` and the Worker logs it, so look there if a page misbehaves.
+- Link previews and bot cards show images from other sites, which load without a referrer: a site
+  sees the reader's IP address, but not which Ember shows its image.
+- An administrator can make a sign-in link for anyone, administrators included, which signs in as
+  that person for 4 hours, more than once, while the session that showed it is still signed in as an
+  administrator. Your own link works only while the session that showed it does, so signing out, a
+  password reset, or a new password saved in another session ends it. Its id travels in the
+  address's fragment, which no log sees.
+- A file's address is signed and never expires: whoever has it can open the file until its message
+  is deleted, as with Active Storage's links.
+- A bot's webhook payload carries the bot's key, so point bots only at servers you trust. Webhooks
+  go only to https, or to http on localhost, so nobody on the way reads the key; a bot saved with an
+  http URL elsewhere before gets no deliveries until its URL is changed, and the Worker's log says
+  why.
+- Workers Logs record each request's address, which for Campfire's bot API and the Slack-compatible
+  webhooks holds the bot's key and for the join link its code; Reset key and Regenerate join link are
+  the remedies if a log is shared, and
+  `"logs": { "invocation_logs": false }` under `observability` in `wrangler.jsonc` drops the
+  per-request record.
+- A new password takes at least 8 characters, at setup, on joining, in a profile or in a reset,
+  though a shorter one set before keeps working. Passwords are kept as scrypt digests at OWASP's
+  cost, which takes about a quarter of a second of CPU in a Durable Object of its own; digests from
+  before scrypt are replaced as their passwords sign in.
+- A session lasts until it goes 400 days unused. Changing your email address or password takes
+  your current password, so holding someone's session isn't enough to take their account, and a new
+  password ends your other sessions and forgets their browsers' push subscriptions. A password reset,
+  deactivation or ban ends all of a person's sessions within a minute.
+- Until Ember is set up, only the setup password, or the setup link a deploy printed, opens the form,
+  so finding a new deployment's address isn't enough to become its administrator. Tries at the
+  password count against one limit for the whole deployment, 10 every 10 minutes, kept in its
+  storage, so neither another address nor a restarted Worker starts the count over; past it, the
+  right password waits too, though the link doesn't, since its token is too long to guess. On
+  localhost, and on a Worker with neither, setup is open or closed as [Deploying](#deploying) says.
+- `EMBER_GUEST_SIGN_IN=true` lets anyone with the address in with just a name, so keep it to
+  `wrangler dev`, as `.dev.vars.example` says.
+- With Open on, anyone who finds the address can make an account, with any email address, and
+  create rooms unless Must be admin to create new rooms is on. Turnstile, given its keys, keeps most
+  bots out, and until then its limits keep a flood from filling the free plan. The join link has no
+  limits, since its secrecy is the gate: regenerate it if it gets out.
+- A Resend API key pasted into Set up email is kept encrypted, and never shown again, even to
+  administrators: Membership says only that Ember has one. Make it a key with Sending access, as Resend
+  suggests, so that one that got out could do no more than send email. A Turnstile secret key given in
+  Set up Turnstile, and an API token given in Set up Ember AI, are kept the same way.
+- A code to reset a password goes to the account's email address, so whoever reads mail there can
+  take the account over, as on most sites. Nobody checks an address is its owner's when someone
+  joins, unless they join with an invitation or Email domain, so someone could join with another
+  person's address, whose owner could then reset its password. A code is kept only as its digest,
+  and at 3 codes an hour and 5 tries each, guessing one would take centuries. The page answers before
+  Ember emails anything, so neither what it says nor how soon tells who has an account.
+- Email domain lets in whoever can read mail at its domains, so list only domains whose addresses
+  your organization hands out: Membership warns of ones anyone can have an address at, such as
+  gmail.com. Its page answers the same whether or not an address has an account, emailing someone
+  who has one a way to sign in instead, so it tells strangers nothing of who's here.
+- The Memberful site vouches for its members, so whoever runs it can sign in here as any of them who
+  have, and while Memberful is on, add new ones. Administrators keep their passwords, so the site being down never locks
+  them out. A webhook whose signature `MEMBERFUL_WEBHOOK_SECRET` doesn't check is refused, and even a
+  signed one only has Ember ask Memberful's API about a member, so one forged or sent again changes
+  nothing.
+- Custom CSS runs on every page for everyone, so it's an administrator's to write, like the rest of
+  the workspace, and `EMBER_RECOVERY_TOKEN` can take over any account, so keep it set only while
+  resetting a password, as above.
+- `/api/health` tells strangers only whether Ember is up; administrators and whoever sends the
+  recovery token hear the rest. QR codes (`/qr_code/<id>`) are drawn for people signed in.
+
+## What it costs
+
+Ember is free, under the MIT license. What it runs on is Cloudflare's, at Cloudflare's prices, as its
+pages had them in October 2026:
+
+- **Workers Free** costs nothing, and Ember is built to fit it: its Durable Objects keep their data in
+  SQLite, it needs no cron triggers, queues or KV, and it hashes passwords and fetches link previews in
+  Durable Objects of their own, since a Worker's request gets only 10 ms of CPU there. The plan's
+  allowances are daily, and reset at midnight UTC. The one Ember reaches first is the 100,000 rows a day
+  that Durable Objects may write: as measured in October 2026, a message writes about 20 (13 in its
+  room, 5 in the search index and 2 in the Workspace), opening a room about 5, a reaction 5, and signing
+  in with a password 26. That's 3,000 to 5,000 messages a day, depending on what else people do: about
+  100 people a day sending 30 messages each, 500 who send a few, or 30 who chat all day. Once a day's
+  rows are written, Ember can't save anything new until midnight UTC. Durable Objects may keep 5 GB in
+  all, and pushes past 50 at a time fail, as [Push notifications](#push-notifications) says.
+- **Workers Paid** costs $5 a month for the whole Cloudflare account, not per person. Its allowances
+  are monthly and far larger, such as 50 million rows written a month, and use past them is billed at
+  Cloudflare's rates.
+- **Files** go to R2, which stores 10 GB a month free, then charges $0.015 per GB a month, and never
+  charges for downloads.
+- **Email**, if Ember sends it: Resend's free plan sends 3,000 emails a month, at most 100 a day, and
+  Cloudflare Email Service includes 3,000 a month on Workers Paid, as [Sending email](#sending-email)
+  says.
+- **Ember AI**, if it's on: Workers AI's models are free up to 10,000 Neurons a day on either plan, and
+  Workers Paid bills past that at $0.011 per 1,000 Neurons. Other companies' models are paid for with
+  AI Gateway's credits, at each provider's own per-token prices, plus a 5% fee on the credits bought.
+  Thinking counts as output, as the answer does, so the [dials](#ember-ai) bound what one answer
+  costs: at most 3,000 tokens out at Off and Short, 6,000 at Low and Medium, and 38,000 at High and Long.
+
+Cloudflare's pages have the details: [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/),
+[Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/),
+[R2 pricing](https://developers.cloudflare.com/r2/pricing/),
+[Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) and
+[AI Gateway's Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
+
+## Storage: Durable Object SQLite or D1
+
+`STORAGE_BACKEND` in `wrangler.jsonc` picks where messages live.
+
+- **`do-sqlite`** (default): each room's Durable Object keeps its messages in its own SQLite
+  storage. Nothing to provision, and reads and writes never leave the object.
+- **`d1`**: messages go to one shared D1 database, which makes cross-room queries (activity,
+  exports) straightforward. Create the database with `pnpm exec wrangler d1 create ember`,
+  uncomment the `d1_databases` block, set `STORAGE_BACKEND` to `"d1"`, and apply
+  `apps/worker/migrations/` with `pnpm --filter @ember/worker d1:migrate:local` (or `--remote`).
+
+Both use the same schema (`apps/worker/migrations/`) and the same queries
+(`apps/worker/src/store.ts`); only the driver (`apps/worker/src/db.ts`) differs. The Workspace
+object's tables follow the same setting. The search index's don't: it keeps every room's messages in
+one FTS5 table in the `SearchIndex` object's own storage, since D1 can't export a database that holds
+one. [`docs/database.md`](database.md) compares them with Campfire's.
